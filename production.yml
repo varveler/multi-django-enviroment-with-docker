@@ -1,0 +1,39 @@
+version: '3.8'
+services:
+    db-prod:
+        image: mysql:8.0.30
+        container_name: ace_db_prod
+        restart: always
+        env_file: ./django/.env.prod
+        ports:
+            - '3306:3306'
+        expose:
+            - '3306'
+        volumes:
+            - db_data:/var/lib/mysql
+        networks:
+            - prod-django-network
+    django-prod:
+        build:
+            context: ./django/
+            dockerfile: Dockerfile
+        container_name: ace_django_prod
+        hostname: ace_django_prod
+        command: /usr/local/bin/gunicorn django.wsgi:application -w 3 -b :8000 --reload --log-level debug --timeout 90
+        ports:
+            - "8000:8000"
+        volumes:
+            - ./django:/django
+        env_file: ./django/.env.prod
+        depends_on:
+            - db
+        links:
+            - db
+            - redis
+            - rabbit
+        networks:
+            - prod-django-network
+    worker:
+        env_file: ./django/.env.prod
+    beat:
+        env_file: ./django/.env.prod

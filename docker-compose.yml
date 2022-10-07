@@ -1,0 +1,176 @@
+version: '3.8'
+services:
+    db:
+        image: mysql:8.0.30
+        restart: always
+        env_file: ./ace/.env.dev
+        ports:
+            - '3306:3306'
+        expose:
+            - '3306'
+        volumes:
+            - db_data:/var/lib/mysql
+        networks:
+            - djangonetwork
+    # Django with gunicorn
+    django:
+        build:
+            context: ./ace/
+            dockerfile: Dockerfile
+        hostname: ace_django
+        command: /usr/local/bin/gunicorn ace.wsgi:application -w 3 -b :8000 --reload --log-level debug --timeout 90
+        ports:
+            - "8000:8000"
+        volumes:
+            - ./ace:/ace
+        env_file: ./ace/.env.dev
+        depends_on:
+            - db
+        links:
+            - db
+            - redis
+            - rabbit
+        networks:
+            - djangonetwork
+    # nginx:
+    #     build: ./docker/nginx/
+    #     container_name: ace_nginx
+    #     hostname: ace_nginx
+    #     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+    #     ports:
+    #         - "80:80"
+    #         - "443:443"
+    #     volumes:
+    #         - /www/static #static volume
+    #         - ./docker/nginx/sites/:/etc/nginx/conf.d
+    #         - ./docker/certbot/conf:/etc/letsencrypt/
+    #         - ./docker/certbot/www:/var/www/certbot
+    #     volumes_from:
+    #         - django
+    #     links:
+    #         - django:django
+    #     networks:
+    #         - djangonetwork
+    nginx-proxy:
+        image: nginxproxy/nginx-proxy
+        ports:
+            - "80:80"
+        volumes:
+            - /var/run/docker.sock:/tmp/docker.sock:ro
+    redis:
+        restart: always
+        image: redis:latest
+        hostname: redis
+        networks:
+            - djangonetwork
+    rabbit:
+        image: rabbitmq:latest
+        hostname: rabbit
+        env_file: ./docker/rabbit/.env
+        ports:
+          - "5672:5672"  # for debugging
+          - "15672:15672"  # rabbitmq management plugin
+        networks:
+            - djangonetwork
+    # SSL Certificate with letsencrypt:
+    # certbot:
+    #   image: certbot/certbot
+    #   restart: unless-stopped
+    #   container_name: ace_certbot
+    #   hostname: ace_certbot
+    #   volumes:
+    #     - ./docker/certbot/www:/var/www/certbot   # TODO
+    #     - ./docker/certbot/conf:/etc/letsencrypt/ # TODO
+    #   entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    # Celery Worker:
+    worker:
+        build:
+            context: ./ace/
+            dockerfile: Dockerfile
+        command: ./wait-for-it.sh rabbit:5672 --timeout=30 -- celery -A ace worker -l info
+        #user: varveler
+        #container_name: ace_worker
+        hostname: ace_worker
+        volumes:
+            - ./ace:/ace
+        links:
+            - db
+            - rabbit
+            - redis
+        env_file: ./ace/.env.dev
+        environment:
+          - LC_ALL=C.UTF-8 # to refactor 
+          - LANG=C.UTF-8 # to refactor 
+        depends_on:
+            - rabbit
+        networks:
+            - djangonetwork
+    # Celery beat
+    beat:
+        build:
+            context: ./ace/
+            dockerfile: Dockerfile
+        command: ["./wait-for-it.sh", "db:5432", "--timeout=30", "--", "celery", "-A", "ace", "beat", "-l", "info", "-S", "django"]
+        #container_name: ace_beat
+        hostname: ace_beat
+        volumes:
+            - ./ace:/ace
+        links:
+            - db
+            - rabbit
+            - redis
+        env_file: ./ace/.env.dev
+        environment:
+          - LC_ALL=C.UTF-8 # to refactor
+          - LANG=C.UTF-8 # to refactor
+        depends_on:
+            - db
+            - rabbit
+        networks:
+            - djangonetwork
+    # DB for wiki
+    # db-wiki:
+    #     image: postgres:11-alpine
+    #     container_name: ace_wiki_db
+    #     environment:
+    #       POSTGRES_DB: wiki
+    #       POSTGRES_PASSWORD: wikijsrocks
+    #       POSTGRES_USER: wikijs
+    #     logging:
+    #       driver: "none"
+    #     restart: unless-stopped
+    #     volumes:
+    #       - db_data_wiki:/var/lib/postgresql/data
+    #     networks:
+    #       - wikinetwork
+    # # wiki js
+    # wiki:
+    #     image: ghcr.io/requarks/wiki:2
+    #     container_name: ace_wiki
+    #     depends_on:
+    #       - db-wiki
+    #     environment: # to refactor into .env
+    #       DB_TYPE: postgres
+    #       DB_HOST: db-wiki
+    #       DB_PORT: 5432
+    #       DB_USER: wikijs
+    #       DB_PASS: wikijsrocks
+    #       DB_NAME: wiki
+    #     restart: unless-stopped
+    #     ports:
+    #       - "80:3000"
+    #     networks:
+    #       - wikinetwork
+volumes:
+    db_data:
+    # db_data_wiki:
+# networks:
+#     djangonetwork:
+#         driver: bridge
+#     wikinetwork:
+#         driver: bridge
+networks:
+  default:
+    external:
+      name: service-tier
+    

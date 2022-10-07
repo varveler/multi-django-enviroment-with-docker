@@ -1,0 +1,35 @@
+version: '3.8'
+services:
+    db-stg:
+        image: mysql:8.0.30
+        container_name: ace_db_stg
+        restart: always
+        env_file: ./django/.env.stg
+        ports:
+            - '3306:3306'
+        expose:
+            - '3306'
+        volumes:
+            - db_data:/var/lib/mysql
+        networks:
+            - stg-django-network
+    django-stg:
+        build:
+            context: ./django/
+            dockerfile: Dockerfile
+        container_name: ace_django_stg
+        hostname: ace_django_stg
+        command: /usr/local/bin/gunicorn django.wsgi:application -w 3 -b :8000 --reload --log-level debug --timeout 90
+        ports:
+            - "8000:8000"
+        volumes:
+            - ./django:/django
+        env_file: ./django/.env.stg
+        depends_on:
+            - db
+        links:
+            - db
+            - redis
+            - rabbit
+        networks:
+            - stg-django-network
